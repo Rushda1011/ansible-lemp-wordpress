@@ -1,0 +1,619 @@
+# ============================================================
+# FILE: playbook.yml
+# PURPOSE: THE MAIN PLAYBOOK — runs all tasks on your EC2 server
+# ============================================================
+# This is the heart of the project. When you run:
+#   ansible-playbook playbook.yml
+#
+# Ansible reads this file and executes every task in order on
+# your EC2 server. It's like a recipe — step by step instructions.
+#
+# STRUCTURE:
+#   - hosts: which servers to run on (from inventory.ini)
+#   - vars_files: load variables (from vars.yml)
+#   - handlers: tasks that run only when "notified" (like restart)
+#   - tasks: the actual work, in order
+#
+# EACH TASK HAS:
+#   - name: human-readable description
+#   - module: the Ansible command (apt, file, template, etc.)
+#   - parameters: what to do
+#   - WHY comments: explanation for your learning
+# ============================================================
+
+---
+- name: Deploy WordPress Website with LEMP Stack
+  hosts: webserver
+  become: yes
+  vars_files:
+    - vars.yml
+
+  # ===========================================================
+  # HANDLERS
+  # ===========================================================
+  # Handlers are like "on-call" tasks. They only run when a
+  # regular task says "notify: Restart Nginx". This prevents
+  # unnecessary restarts — if config didn't change, no restart.
+  # ===========================================================
+  handlers:
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+
+    - name: Restart PHP-FPM
+      service:
+        name: "php{{ php_version }}-fpm"
+        state: restarted
+
+    - name: Restart MariaDB
+      service:
+        name: mariadb
+        state: restarted
+
+    - name: Restart SSH
+      service:
+        name: sshd
+        state: restarted
+
+  # ===========================================================
+  # TASKS — Executed in order, top to bottom
+  # ===========================================================
+  tasks:
+
+    # =========================================================
+    # STEP 1: INSTALL PACKAGES (LEMP STACK)
+    # =========================================================
+    # WHY: WordPress needs a web server (Nginx), a database
+    # (MariaDB), and PHP to run. This is called the LEMP stack.
+    # =========================================================
+
+    - name: "STEP 1.1 — Update apt package cache"
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      # WHAT: Refreshes the list of available packages from Ubuntu repos.
+      # WHY:  Like refreshing an app store before installing — ensures
+      #       we get the latest versions.
+      # cache_valid_time: Don't re-update if we updated in the last hour.
+
+    - name: "STEP 1.2 — Install prerequisite tools"
+      apt:
+        name:
+          - software-properties-common  # Lets us add PPAs (extra repos)
+          - apt-transport-https         # Secure package downloads
+          - ca-certificates             # SSL certificates for downloads
+          - curl                        # HTTP client tool
+          - gnupg                       # Encryption for package signing
+          - unzip                       # Extract ZIP files
+          - python3-pymysql             # Python MySQL driver (Ansible needs this!)
+          - ufw                         # Firewall management
+        state: present
+      # WHAT: Installs utility tools needed by later steps.
+      # WHY:  python3-pymysql is critical — Ansible uses it to run MySQL commands.
+
+    # - name: "STEP 1.3 — Add PHP PPA repository"
+    #   apt_repository:
+    #     repo: "ppa:ondrej/php"
+    #     state: present
+    #     update_cache: yes
+      # WHAT: Adds the Ondřej Surý PPA — a trusted source for latest PHP versions.
+      # WHY:  Ubuntu's default repos may only have PHP 8.1. The PPA has PHP 8.2+.
+      # PPA = Personal Package Archive (a third-party software repository).
+
+    - name: "STEP 1.4 — Install Nginx web server"
+      apt:
+        name: nginx
+        state: present
+      # WHAT: Installs Nginx (pronounced "Engine-X").
+      # WHY:  Nginx receives HTTP requests from browsers and serves your website.
+      #       It's faster and more memory-efficient than Apache for most uses.
+
+    - name: "STEP 1.5 — Install MariaDB 10.6 database server"
+      apt:
+        name:
+          - mariadb-server   # The database server itself
+          - mariadb-client   # Command-line tool to interact with the database
+        state: present
+      # WHAT: Installs MariaDB (a MySQL-compatible database).
+      # WHY:  WordPress stores EVERYTHING in the database — posts, users,
+      #       comments, settings, theme options. MariaDB 10.6 is what the task requires.
+
+    - name: "STEP 1.6 — Install PHP with WordPress extensions"
+      apt:
+        name:
+          - php
+          - php-fpm
+          - php-mysql
+          - php-curl
+          - php-gd
+          - php-intl
+          - php-mbstring
+          - php-soap
+          - php-xml
+          - php-zip
+          - php-cli
+          - php-bcmath
+        state: present
+      # WHAT: Installs PHP 8.2 and all extensions WordPress needs.
+      # WHY:  Each extension adds capability. Without mysql extension,
+      #       WordPress can't talk to the database. Without gd, it can't
+      #       create image thumbnails, etc.
+
+    - name: "STEP 1.7 — Install phpMyAdmin (non-interactive)"
+      apt:
+        name: phpmyadmin
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      # WHAT: Installs phpMyAdmin — a web UI for managing MySQL/MariaDB.
+      # WHY:  Instead of typing SQL in the terminal, you get a nice
+      #       browser-based interface. The noninteractive flag skips
+      #       setup prompts that would hang Ansible.
+
+    - name: "STEP 1.8 — Install Certbot for Let's Encrypt SSL"
+      apt:
+        name:
+          - certbot                  # The SSL certificate tool
+          - python3-certbot-nginx    # Nginx plugin for Certbot
+        state: present
+      # WHAT: Installs Certbot, which gets FREE SSL certificates.
+      # WHY:  SSL encrypts traffic (HTTPS). Without it, passwords travel
+      #       in plain text. Let's Encrypt certificates are free and auto-renewable.
+
+    - name: "STEP 1.9 — Start and enable all services"
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - nginx
+        - mariadb
+        - "php{{ php_version }}-fpm"
+      # WHAT: Starts each service and enables auto-start on boot.
+      # WHY:  "enabled: yes" means if the server reboots, services
+      #       start automatically. "loop" runs this task 3 times,
+      #       once for each service in the list.
+
+    # =========================================================
+    # STEP 2: CREATE USER & WEBSITE DIRECTORY
+    # =========================================================
+    # WHY: The task says to create a user with home directory
+    # and set web root to /home/username/websitename/public
+    # =========================================================
+
+    - name: "STEP 2.1 — Create website user '{{ site_user }}'"
+      user:
+        name: "{{ site_user }}"
+        password: "{{ site_user_password | password_hash('sha512') }}"
+        shell: /bin/bash
+        home: "/home/{{ site_user }}"
+        createhome: yes
+        groups: www-data
+        append: yes
+      # WHAT: Creates a Linux user called "webuser".
+      # WHY:
+      #   - password_hash('sha512'): Linux never stores plain text passwords.
+      #     This converts "Ipsr@Web2026!" to a hash like "$6$abc...xyz"
+      #   - groups: www-data: Adds user to the Nginx group so web server
+      #     can read files owned by this user.
+      #   - append: yes: Don't remove user from any existing groups.
+
+    - name: "STEP 2.2 — Create website directory structure"
+      file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: "{{ site_user }}"
+        group: www-data
+        mode: "0755"
+      # WHAT: Creates /home/webuser/studentlab/public/ (and parent dirs).
+      # WHY:  This is where WordPress files will live. mode 0755 means:
+      #   7 (owner=rwx) — webuser can read, write, execute
+      #   5 (group=r-x) — www-data can read and traverse
+      #   5 (others=r-x) — everyone else can read and traverse
+
+    - name: "STEP 2.3 — Set correct permissions on home directory"
+      file:
+        path: "/home/{{ site_user }}"
+        mode: "0755"
+        owner: "{{ site_user }}"
+        group: "{{ site_user }}"
+      # WHAT: Ensures the home directory has correct permissions.
+      # WHY:  Nginx needs to traverse /home/webuser/ to reach the
+      #       public/ directory inside it.
+
+    # =========================================================
+    # STEP 3: CONFIGURE SFTP ACCESS
+    # =========================================================
+    # WHY: The task requires secure file transfer for the user.
+    # SFTP runs over SSH (port 22) so it's encrypted.
+    # =========================================================
+
+    - name: "STEP 3.1 — Ensure password authentication is enabled for SFTP"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication yes'
+      notify: Restart SSH
+      # WHAT: Enables password-based login for SSH/SFTP.
+      # WHY:  By default, EC2 instances only allow key-based login.
+      #       We enable password auth so the user can SFTP with a password.
+
+    - name: "STEP 3.2 — Add SFTP configuration for user"
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        marker: "# {mark} ANSIBLE MANAGED SFTP BLOCK"
+        block: |
+          Match User {{ site_user }}
+              PasswordAuthentication yes
+              AllowTcpForwarding no
+              X11Forwarding no
+      notify: Restart SSH
+      # WHAT: Adds SFTP-specific settings for our user.
+      # WHY:
+      #   - Match User: These rules ONLY apply to "webuser"
+      #   - PasswordAuthentication yes: Allow password login
+      #   - AllowTcpForwarding no: Security — prevent SSH tunneling
+      #   - X11Forwarding no: Security — no GUI forwarding needed
+      #
+      # NOTE: We're NOT using ChrootDirectory here because it
+      # conflicts with Nginx needing to read the files. The user
+      # can access their home directory and website files via SFTP.
+
+    # =========================================================
+    # STEP 4: CONFIGURE DATABASE & PHPMYADMIN
+    # =========================================================
+    # WHY: WordPress needs a database. phpMyAdmin gives a web
+    # interface to manage it without typing SQL commands.
+    # =========================================================
+
+    - name: "STEP 4.1 — Start MariaDB service"
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: "STEP 4.2 — Set MariaDB root password"
+      mysql_user:
+        name: root
+        password: "{{ db_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        host_all: yes
+        state: present
+      # WHAT: Sets a password for the database root (admin) account.
+      # WHY:  By default, MariaDB has no root password — anyone on the
+      #       server could access all databases. We lock it down.
+      # login_unix_socket: Connect via local socket (no password needed
+      #       the first time since it's a fresh install).
+
+    - name: "STEP 4.3 — Create .my.cnf for root (auto-login)"
+      copy:
+        dest: /root/.my.cnf
+        content: |
+          [client]
+          user=root
+          password={{ db_root_password }}
+        mode: "0600"
+      # WHAT: Creates a file so root can auto-login to MySQL.
+      # WHY:  Subsequent Ansible mysql_* tasks need to authenticate.
+      #       Mode 0600 = only root can read this file (security).
+
+    - name: "STEP 4.4 — Create WordPress database"
+      mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_user: root
+        login_password: "{{ db_root_password }}"
+      # WHAT: Creates a database called "wordpress_db".
+      # WHY:  WordPress stores all content here — posts, pages, users,
+      #       comments, settings, plugin data, theme customizations.
+
+    - name: "STEP 4.5 — Create WordPress database user with permissions"
+      mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        priv: "{{ db_name }}.*:ALL"
+        state: present
+        login_user: root
+        login_password: "{{ db_root_password }}"
+      # WHAT: Creates user "wp_user" with full access to "wordpress_db" only.
+      # WHY:  Security principle of "least privilege" — this user can only
+      #       access the WordPress database, not system databases or others.
+      #       If WordPress gets hacked, damage is limited.
+
+    - name: "STEP 4.6 — Remove anonymous MySQL users (security)"
+      mysql_user:
+        name: ""
+        state: absent
+        login_user: root
+        login_password: "{{ db_root_password }}"
+        host_all: yes
+      # WHAT: Deletes anonymous (no-username) database accounts.
+      # WHY:  Fresh MariaDB installs have anonymous users that anyone
+      #       can use to connect. This is a security risk.
+
+    - name: "STEP 4.7 — Remove test database (security)"
+      mysql_db:
+        name: test
+        state: absent
+        login_user: root
+        login_password: "{{ db_root_password }}"
+      # WHAT: Removes the default "test" database.
+      # WHY:  It's a default database with open permissions — a security risk.
+
+    - name: "STEP 4.8 — Create phpMyAdmin Nginx config"
+      template:
+        src: templates/phpmyadmin-nginx.conf.j2
+        dest: /etc/nginx/sites-available/phpmyadmin
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Nginx
+      # WHAT: Copies our phpMyAdmin Nginx template to the server.
+      # WHY:  Ansible replaces {{ variables }} with real values and
+      #       puts the result in Nginx's config directory.
+
+    - name: "STEP 4.9 — Enable phpMyAdmin site in Nginx"
+      file:
+        src: /etc/nginx/sites-available/phpmyadmin
+        dest: /etc/nginx/sites-enabled/phpmyadmin
+        state: link
+      notify: Restart Nginx
+      # WHAT: Creates a symbolic link to enable the site.
+      # WHY:  Nginx has two folders:
+      #       - sites-available/ = all configs (enabled or not)
+      #       - sites-enabled/   = only active configs (via symlinks)
+      #       Creating a link here "activates" phpMyAdmin.
+
+    # =========================================================
+    # STEP 5: CONFIGURE NGINX & PHP-FPM FOR WORDPRESS
+    # =========================================================
+
+    - name: "STEP 5.1 — Deploy PHP-FPM pool for website user"
+      template:
+        src: templates/php-fpm-pool.conf.j2
+        dest: "/etc/php/{{ php_version }}/fpm/pool.d/{{ site_user }}.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart PHP-FPM
+      # WHAT: Creates a dedicated PHP-FPM pool for our user.
+      # WHY:  PHP processes will run AS "webuser" (not root). This is
+      #       important for security — if PHP code is exploited, the
+      #       attacker only has "webuser" permissions, not root.
+
+    - name: "STEP 5.2 — Deploy Nginx WordPress site config"
+      template:
+        src: templates/nginx-wordpress.conf.j2
+        dest: "/etc/nginx/sites-available/{{ domain_name }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Nginx
+
+    - name: "STEP 5.3 — Enable WordPress site in Nginx"
+      file:
+        src: "/etc/nginx/sites-available/{{ domain_name }}"
+        dest: "/etc/nginx/sites-enabled/{{ domain_name }}"
+        state: link
+      notify: Restart Nginx
+
+    - name: "STEP 5.4 — Remove default Nginx site"
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Restart Nginx
+      # WHAT: Removes the default "Welcome to Nginx" page.
+      # WHY:  We want YOUR website to load, not the default page.
+
+    - name: "STEP 5.5 — Test Nginx configuration syntax"
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+      # WHAT: Checks if Nginx config has any syntax errors.
+      # WHY:  ALWAYS test before restarting! A bad config will
+      #       crash Nginx and take your site offline.
+
+    # =========================================================
+    # STEP 6: DOWNLOAD & INSTALL WORDPRESS
+    # =========================================================
+
+    - name: "STEP 6.1 — Download latest WordPress"
+      get_url:
+        url: https://wordpress.org/latest.tar.gz
+        dest: /tmp/wordpress.tar.gz
+        mode: "0644"
+      # WHAT: Downloads WordPress as a compressed archive.
+      # WHY:  We get the latest stable version directly from wordpress.org.
+
+    - name: "STEP 6.2 — Extract WordPress to temporary directory"
+      unarchive:
+        src: /tmp/wordpress.tar.gz
+        dest: /tmp/
+        remote_src: yes
+      # WHAT: Extracts the archive. Creates /tmp/wordpress/ folder.
+      # WHY:  remote_src=yes means "the file is already on the server"
+      #       (we downloaded it there in the previous step).
+
+    - name: "STEP 6.3 — Copy WordPress files to web root"
+      shell: "cp -a /tmp/wordpress/. {{ web_root }}/"
+      args:
+        creates: "{{ web_root }}/wp-login.php"
+      # WHAT: Copies all WordPress files to /home/webuser/studentlab/public/
+      # WHY:  "creates" is a guard — if wp-login.php already exists, skip
+      #       this step (makes the playbook safe to run multiple times).
+
+    - name: "STEP 6.4 — Deploy WordPress config from template"
+      template:
+        src: templates/wp-config.php.j2
+        dest: "{{ web_root }}/wp-config.php"
+        owner: "{{ site_user }}"
+        group: www-data
+        mode: "0640"
+      # WHAT: Creates wp-config.php with database credentials filled in.
+      # WHY:  This is WordPress's main config file. Mode 0640 means only
+      #       the owner and group can read it — protects database passwords.
+
+    - name: "STEP 6.5 — Set ownership of all WordPress files"
+      file:
+        path: "{{ web_root }}"
+        owner: "{{ site_user }}"
+        group: www-data
+        recurse: yes
+      # WHAT: Makes "webuser" own all files, with www-data as group.
+      # WHY:  webuser can edit files. Nginx (www-data group) can read them.
+
+    - name: "STEP 6.6 — Set directory permissions (755)"
+      shell: "find {{ web_root }} -type d -exec chmod 755 {} \\;"
+      # WHAT: Sets all directories to 755 (rwxr-xr-x).
+      # WHY:  Directories need "execute" permission for traversal.
+
+    - name: "STEP 6.7 — Set file permissions (644)"
+      shell: "find {{ web_root }} -type f -exec chmod 644 {} \\;"
+      # WHAT: Sets all files to 644 (rw-r--r--).
+      # WHY:  Files don't need execute permission (they're not scripts).
+
+    - name: "STEP 6.8 — Create wp-content/uploads with write permissions"
+      file:
+        path: "{{ web_root }}/wp-content/uploads"
+        state: directory
+        owner: "{{ site_user }}"
+        group: www-data
+        mode: "0775"
+      # WHAT: Creates the uploads directory with write permissions.
+      # WHY:  WordPress saves uploaded images/media here. Both the user
+      #       and PHP-FPM (www-data) need to write files here.
+
+    # =========================================================
+    # STEP 7: SSL CERTIFICATE (Let's Encrypt)
+    # =========================================================
+
+    - name: "STEP 7.0 — Configure UFW firewall"
+      shell: |
+        ufw allow 22/tcp
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw allow 8080/tcp
+        echo "y" | ufw enable
+      ignore_errors: yes
+      # WHAT: Opens required ports in the firewall.
+      # WHY:  22=SSH, 80=HTTP, 443=HTTPS, 8080=phpMyAdmin
+
+    - name: "STEP 7.1 — Flush handlers (ensure Nginx is running)"
+      meta: flush_handlers
+      # WHAT: Forces any pending handler (restart) to run NOW.
+      # WHY:  Certbot needs Nginx running to verify domain ownership.
+
+    - name: "STEP 7.2 — Obtain SSL certificate from Let's Encrypt"
+      command: >
+        certbot --nginx
+        -d {{ domain_name }}
+        -d www.{{ domain_name }}
+        --non-interactive
+        --agree-tos
+        --email {{ wp_admin_email }}
+        --redirect
+      register: certbot_result
+      ignore_errors: yes
+      # WHAT: Gets a free SSL certificate and configures Nginx for HTTPS.
+      # WHY:
+      #   --nginx: Use Nginx plugin (auto-modifies config)
+      #   -d: Domain names to secure
+      #   --non-interactive: Don't ask questions (we're automated)
+      #   --agree-tos: Accept terms of service
+      #   --redirect: Auto-redirect HTTP→HTTPS
+      #
+      # NOTE: Domain DNS must point to this server's IP BEFORE running this!
+
+    - name: "STEP 7.3 — Display Certbot result"
+      debug:
+        var: certbot_result.stdout_lines
+      when: certbot_result is defined
+      ignore_errors: yes
+
+    - name: "STEP 7.4 — Set up automatic certificate renewal"
+      cron:
+        name: "Certbot auto-renewal"
+        minute: "30"
+        hour: "2"
+        job: "certbot renew --quiet"
+        user: root
+      # WHAT: Creates a cron job to auto-renew certificates.
+      # WHY:  Let's Encrypt certs expire every 90 days. This checks
+      #       daily at 2:30 AM and renews if needed. --quiet = no output
+      #       unless there's an error.
+
+    # =========================================================
+    # STEP 8: INSTALL WP-CLI & COMPLETE SETUP
+    # =========================================================
+
+    - name: "STEP 8.1 — Download WP-CLI"
+      get_url:
+        url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+        dest: /usr/local/bin/wp
+        mode: "0755"
+      # WHAT: Downloads WP-CLI — a command-line tool for WordPress.
+      # WHY:  Lets us complete WordPress installation automatically
+      #       without opening a browser.
+
+    - name: "STEP 8.2 — Run WordPress installation via WP-CLI"
+      become_user: "{{ site_user }}"
+      command: >
+        wp core install
+        --url="http://{{ domain_name }}"
+        --title="{{ wp_site_title }}"
+        --admin_user="{{ wp_admin_user }}"
+        --admin_password="{{ wp_admin_password }}"
+        --admin_email="{{ wp_admin_email }}"
+        --path="{{ web_root }}"
+        --skip-email
+      register: wp_install
+      ignore_errors: yes
+      # WHAT: Completes the WordPress "5-minute install" from command line.
+      # WHY:  Instead of opening the browser setup wizard, WP-CLI does
+      #       it automatically. Creates the admin account and sets up tables.
+
+    - name: "STEP 8.3 — Set permalink structure (pretty URLs)"
+      become_user: "{{ site_user }}"
+      command: >
+        wp rewrite structure '/%postname%/'
+        --path="{{ web_root }}"
+      ignore_errors: yes
+      # WHAT: Changes URL structure from ?p=123 to /post-title/
+      # WHY:  SEO-friendly and human-readable URLs.
+
+    # =========================================================
+    # FINAL: DISPLAY ALL CREDENTIALS
+    # =========================================================
+
+    - name: "🎉 DEPLOYMENT COMPLETE — Your Credentials"
+      debug:
+        msg: |
+          ============================================
+          🎉 DEPLOYMENT COMPLETE!
+          ============================================
+
+          📁 SFTP Credentials:
+            Host:     {{ server_ip }}
+            Port:     22
+            Username: {{ site_user }}
+            Password: {{ site_user_password }}
+
+          🗄️ phpMyAdmin Credentials:
+            URL:      http://{{ domain_name }}:8080
+            Username: {{ db_user }}
+            Password: {{ db_password }}
+            (Also try: http://{{ server_ip }}:8080)
+
+          📝 WordPress Credentials:
+            Site URL:  http://{{ domain_name }}
+            Admin URL: http://{{ domain_name }}/wp-admin
+            Username:  {{ wp_admin_user }}
+            Password:  {{ wp_admin_password }}
+
+          ============================================
+          NEXT STEPS:
+          1. Open http://{{ domain_name }}/wp-admin
+          2. Log in with WordPress credentials
+          3. Write your personal blog post!
+          ============================================

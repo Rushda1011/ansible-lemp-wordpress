@@ -1,0 +1,39 @@
+; ============================================================
+; FILE: templates/php-fpm-pool.conf.j2
+; PURPOSE: PHP-FPM process pool for your website user
+; ============================================================
+; PHP-FPM (FastCGI Process Manager) is SEPARATE from Nginx.
+; Nginx handles HTTP requests, but it can't run PHP code itself.
+; So Nginx forwards .php requests to PHP-FPM through a socket.
+;
+; WHAT THIS DOES:
+; - Creates a pool of PHP worker processes running as "webuser"
+; - Creates a Unix socket file that Nginx connects to
+; - Sets PHP limits (upload size, memory, execution time)
+;
+; WHY A SEPARATE POOL?
+; Security! Each website can have its own pool running as a
+; different user. If one site gets hacked, it can't affect others.
+;
+; ANALOGY: Nginx is the receptionist, PHP-FPM is the worker
+; who actually processes the request.
+; ============================================================
+
+[{{ site_user }}]
+user = {{ site_user }}
+group = {{ site_user }}
+
+listen = /run/php/php{{ php_version }}-fpm-{{ site_user }}.sock
+listen.owner = www-data
+listen.group = www-data
+
+pm = dynamic
+pm.max_children = 10
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+
+php_admin_value[upload_max_filesize] = 64M
+php_admin_value[post_max_size] = 64M
+php_admin_value[max_execution_time] = 300
+php_admin_value[memory_limit] = 256M

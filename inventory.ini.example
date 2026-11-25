@@ -1,0 +1,13 @@
+# ============================================================
+# FILE: inventory.ini.example
+# PURPOSE: Sample inventory definition
+# INSTRUCTIONS: Copy this file to 'inventory.ini' and update your server IP:
+#               cp inventory.ini.example inventory.ini
+# ============================================================
+
+[webserver]
+# Option A: Remote Deployment over SSH
+# YOUR_EC2_PUBLIC_IP
+
+# Option B: Local Execution (when running on the server directly)
+localhost ansible_connection=local

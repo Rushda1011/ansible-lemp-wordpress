@@ -1,0 +1,42 @@
+# ============================================================
+# Private Keys & Credentials (CRITICAL - NEVER COMMIT)
+# ============================================================
+*.pem
+*.key
+*.id_rsa
+*.id_ed25519
+id_rsa*
+id_ed25519*
+
+# Sensitive Variables with Real Passwords
+vars.yml
+
+# Real Host IP configs (tracked via inventory.ini.example)
+inventory.ini
+
+# ============================================================
+# OS & Editor Artifacts
+# ============================================================
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# ============================================================
+# Ansible Runtime Artifacts
+# ============================================================
+*.retry
+*.log
+.vault_pass
+.ansible/
+__pycache__/
+*.pyc
+
+# ============================================================
+# Local Evaluation & Word Documentation Backups
+# ============================================================
+*.docx
+capture_screenshots.py
+update_report.py

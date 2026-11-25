@@ -1,0 +1,38 @@
+# ============================================================
+# FILE: templates/phpmyadmin-nginx.conf.j2
+# PURPOSE: Nginx config to serve phpMyAdmin on port 8080
+# ============================================================
+# phpMyAdmin is a web-based tool for managing your database.
+# Instead of typing SQL commands in the terminal, you get a
+# nice visual interface in your browser.
+#
+# WHY PORT 8080?
+# We run phpMyAdmin on a DIFFERENT port (8080) than the main
+# website (80/443). This is a security best practice:
+#   - Your website: http://studentlab2026.shop (port 80)
+#   - phpMyAdmin:   http://studentlab2026.shop:8080
+# You can even firewall port 8080 to only allow YOUR IP.
+# ============================================================
+
+server {
+    listen 8080;
+    server_name {{ domain_name }} {{ server_ip }};
+
+    root /usr/share/phpmyadmin;
+    index index.php index.html index.htm;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php{{ php_version }}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_index index.php;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}

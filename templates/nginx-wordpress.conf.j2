@@ -1,0 +1,54 @@
+# ============================================================
+# FILE: templates/nginx-wordpress.conf.j2
+# PURPOSE: Nginx configuration for your WordPress website
+# ============================================================
+# This is a TEMPLATE (notice the .j2 extension = Jinja2).
+# Ansible replaces variables with real values from vars.yml.
+#
+# WHAT THIS DOES:
+# - Tells Nginx to listen on port 80 (HTTP)
+# - Points to your website files at /home/webuser/studentlab/public
+# - Passes .php files to PHP-FPM (WordPress is written in PHP)
+# - Sets up "pretty URLs" (/my-post/ instead of ?p=123)
+# - Allows up to 64MB file uploads (for WordPress media)
+#
+# FLOW: Browser → Nginx (port 80) → PHP-FPM → MariaDB
+# ============================================================
+
+server {
+    listen 80;
+    server_name {{ domain_name }} www.{{ domain_name }};
+
+    root {{ web_root }};
+    index index.php index.html index.htm;
+
+    # WordPress "pretty permalinks" — tries the file first,
+    # then falls back to index.php (WordPress router)
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # Pass PHP files to PHP-FPM for processing
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php{{ php_version }}-fpm-{{ site_user }}.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_index index.php;
+    }
+
+    # Block access to hidden files (.htaccess, .git, etc.)
+    location ~ /\.ht {
+        deny all;
+    }
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # Allow large file uploads for WordPress media library
+    client_max_body_size 64M;
+
+    # Log files for debugging
+    access_log /var/log/nginx/{{ domain_name }}-access.log;
+    error_log /var/log/nginx/{{ domain_name }}-error.log;
+}

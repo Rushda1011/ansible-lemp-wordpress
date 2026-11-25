@@ -1,0 +1,44 @@
+# ============================================================
+# FILE: vars.yml.example
+# PURPOSE: Template for configurable variables
+# INSTRUCTIONS: Copy this file to 'vars.yml' and update with your own values:
+#               cp vars.yml.example vars.yml
+# ============================================================
+
+---
+# ----- DOMAIN & SERVER CONFIGURATION -----
+# Replace with your registered domain name or sub-domain
+domain_name: "yourdomain.com"
+
+# Target EC2 instance public IP address
+server_ip: "YOUR_EC2_PUBLIC_IP"
+
+# ----- SYSTEM USER CONFIGURATION -----
+# Isolated Linux user for SFTP access and web root ownership
+site_user: "webuser"
+site_user_password: "ReplaceWithStrongUserPassword!"
+
+# ----- DIRECTORY STRUCTURE -----
+# Standard structure: /home/<username>/<websitename>/public
+website_name: "studentlab"
+web_root: "/home/{{ site_user }}/{{ website_name }}/public"
+
+# ----- DATABASE CREDENTIALS (MARIADB / MYSQL) -----
+db_name: "wordpress_db"
+db_user: "wp_user"
+db_password: "ReplaceWithStrongDbPassword!"
+db_root_password: "ReplaceWithStrongRootPassword!"
+
+# ----- WORDPRESS INITIALIZATION -----
+# Credentials for logging into the WordPress admin dashboard (/wp-admin)
+wp_admin_user: "admin"
+wp_admin_password: "ReplaceWithStrongAdminPassword!"
+wp_admin_email: "admin@yourdomain.com"
+wp_site_title: "My Personal Blog"
+
+# ----- PHP VERSION -----
+php_version: "8.5"
+
+# ----- PHPMYADMIN CONFIGURATION -----
+# 32-character random string for phpMyAdmin cookie encryption
+pma_blowfish_secret: "ReplaceWithRandom32CharacterString!"
